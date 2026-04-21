@@ -1,50 +1,57 @@
-import React from "react";
-import { Lock } from "lucide-react";
+import { useState } from "react";
 
 export default function LoginScreen({
   passwordInput,
   setPasswordInput,
+  emailInput,
+  setEmailInput,
   loginError,
   handleLogin,
+  handleCreateAccount,
 }) {
+  const [modoCadastro, setModoCadastro] = useState(false);
+
   return (
-    <div className="login-page">
-      <div className="login-left">
-        <div className="badge">Painel privado</div>
-        <h1>Sistema de funcionários e dados pessoais</h1>
-        <p>
-          Organize cadastros, encontre pessoas rápido e mantenha tudo em um
-          painel só.
-        </p>
-      </div>
+    <div className="login-screen">
+      <div className="login-card">
+        <h1>Site de Dados</h1>
+        <p>{modoCadastro ? "Criar conta" : "Entrar no sistema"}</p>
 
-      <form onSubmit={handleLogin} className="login-card">
-        <div className="login-title">
-          <div className="icon-box">
-            <Lock size={22} />
-          </div>
-          <div>
-            <h2>Entrar</h2>
-            <p>Senha padrão inicial: 1234</p>
-          </div>
-        </div>
+        <form
+          onSubmit={modoCadastro ? handleCreateAccount : handleLogin}
+          className="login-form"
+        >
+          <input
+            type="email"
+            placeholder="Seu e-mail"
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            required
+          />
 
-        <label>
-          <span>Senha</span>
           <input
             type="password"
+            placeholder="Sua senha"
             value={passwordInput}
             onChange={(e) => setPasswordInput(e.target.value)}
-            placeholder="Digite sua senha"
+            required
           />
-        </label>
 
-        {loginError ? <p className="error-text">{loginError}</p> : null}
+          {loginError ? <p className="error-text">{loginError}</p> : null}
 
-        <button type="submit" className="primary-btn full">
-          Entrar no sistema
-        </button>
-      </form>
+          <button type="submit" className="primary-btn">
+            {modoCadastro ? "Criar conta" : "Entrar"}
+          </button>
+
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => setModoCadastro((prev) => !prev)}
+          >
+            {modoCadastro ? "Já tenho conta" : "Criar conta"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
