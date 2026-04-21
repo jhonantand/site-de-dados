@@ -8,9 +8,8 @@ import EmployeeForm from "./components/EmployeeForm";
 import EmployeeDetails from "./components/EmployeeDetails";
 import PersonalForm from "./components/PersonalForm";
 import PersonalDetails from "./components/PersonalDetails";
-
-const STORAGE_KEY = "painel_empresa_jhonantan_v2";
-const PASSWORD_KEY = "painel_empresa_password_v2";
+import { supabase } from "./lib/supabase";
+import { entrar, criarConta, trocarSenha, sair } from "./services/auth";
 
 const emptyEmployee = {
   id: "",
@@ -36,34 +35,19 @@ const emptyPerson = {
   outros: "",
 };
 
-function loadData() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) {
-    return {
-      funcionarios: initialEmployees,
-      pessoas: initialPeople,
-    };
-  }
-
-  try {
-    return JSON.parse(saved);
-  } catch {
-    return {
-      funcionarios: initialEmployees,
-      pessoas: initialPeople,
-    };
-  }
-}
-
-function loadPassword() {
-  return localStorage.getItem(PASSWORD_KEY) || "1234";
-}
-
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [session, setSession] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(true);
+
   const [passwordInput, setPasswordInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const [loginError, setLoginError] = useState("");
-  const [data, setData] = useState({ funcionarios: [], pessoas: [] });
+
+  const [data, setData] = useState({
+    funcionarios: initialEmployees,
+    pessoas: initialPeople,
+  });
+
   const [module, setModule] = useState("dashboard");
 
   const [employeeSearch, setEmployeeSearch] = useState("");
@@ -81,12 +65,64 @@ export default function App() {
   const [newPassword, setNewPassword] = useState("");
 
   useEffect(() => {
-    setData(loadData());
+    async function carregarSessao() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      setSession(session);
+      setLoadingSession(false);
+    }
+
+    carregarSessao();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, sessionAtual) => {
+      setSession(sessionAtual);
+      setLoadingSession(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+    if (session) {
+      carregarFuncionarios();
+    }
+  }, [session]);
+
+  async function carregarFuncionarios() {
+    const { data: funcionarios, error } = await supabase
+      .from("funcionarios")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    const funcionariosFormatados = (funcionarios || []).map((item) => ({
+      id: item.id,
+      nomeCompleto: item.nome_completo || "",
+      email: item.email || "",
+      telefone: item.telefone || "",
+      cpf: item.cpf || "",
+      dataEntrada: item.data_entrada || "",
+      cargo: item.cargo || "",
+      setor: item.setor || "",
+      observacoes: item.observacoes || "",
+      status: item.status || "Ativo",
+    }));
+
+    setData((prev) => ({
+      ...prev,
+      funcionarios: funcionariosFormatados,
+    }));
+  }
 
   const filteredEmployees = useMemo(() => {
     const term = employeeSearch.toLowerCase().trim();
@@ -118,14 +154,24 @@ export default function App() {
   const selectedPerson =
     data.pessoas.find((item) => item.id === selectedPersonId) || null;
 
-  function handleLogin(e) {
+  async function handleLogin(e) {
     e.preventDefault();
 
-    if (passwordInput === loadPassword()) {
-      setIsAuthenticated(true);
+    try {
       setLoginError("");
-    } else {
-      setLoginError("Senha incorreta.");
+      await entrar(emailInput, passwordInput);
+      setPasswordInput("");
+    } catch (error) {
+      setLoginError(error.message || "Erro ao entrar.");
+    }
+  }
+
+  async function handleCreateAccount() {
+    try {
+      await criarConta(emailInput, passwordInput);
+      alert("Conta criada com sucesso. Agora entra com teu email e senha.");
+    } catch (error) {
+      alert(error.message || "Erro ao criar conta.");
     }
   }
 
@@ -140,34 +186,57 @@ export default function App() {
     setEditingEmployee({ ...employee });
   }
 
-  function saveEmployee() {
+  async function saveEmployee() {
     if (!editingEmployee?.nomeCompleto?.trim()) return;
 
-    setData((prev) => {
-      const exists = prev.funcionarios.some((f) => f.id === editingEmployee.id);
+    const payload = {
+      nome_completo: editingEmployee.nomeCompleto,
+      email: editingEmployee.email,
+      telefone: editingEmployee.telefone,
+      cpf: editingEmployee.cpf,
+      data_entrada: editingEmployee.dataEntrada || null,
+      cargo: editingEmployee.cargo || null,
+      setor: editingEmployee.setor || null,
+      observacoes: editingEmployee.observacoes || null,
+      status: editingEmployee.status || "Ativo",
+    };
 
-      return {
-        ...prev,
-        funcionarios: exists
-          ? prev.funcionarios.map((f) =>
-              f.id === editingEmployee.id ? editingEmployee : f
-            )
-          : [editingEmployee, ...prev.funcionarios],
-      };
-    });
+    if (data.funcionarios.some((f) => f.id === editingEmployee.id)) {
+      const { error } = await supabase
+        .from("funcionarios")
+        .update(payload)
+        .eq("id", editingEmployee.id);
 
+      if (error) {
+        alert(error.message);
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("funcionarios").insert([payload]);
+
+      if (error) {
+        alert(error.message);
+        return;
+      }
+    }
+
+    await carregarFuncionarios();
     setSelectedEmployeeId(editingEmployee.id);
     setEditingEmployee(null);
     setIsCreatingEmployee(false);
   }
 
-  function deleteEmployee(id) {
+  async function deleteEmployee(id) {
     if (!window.confirm("Deseja excluir este funcionário?")) return;
 
-    setData((prev) => ({
-      ...prev,
-      funcionarios: prev.funcionarios.filter((f) => f.id !== id),
-    }));
+    const { error } = await supabase.from("funcionarios").delete().eq("id", id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await carregarFuncionarios();
 
     if (selectedEmployeeId === id) setSelectedEmployeeId(null);
     if (editingEmployee?.id === id) setEditingEmployee(null);
@@ -217,20 +286,41 @@ export default function App() {
     if (editingPerson?.id === id) setEditingPerson(null);
   }
 
-  function saveNewPassword() {
+  async function saveNewPassword() {
     if (!newPassword.trim()) return;
-    localStorage.setItem(PASSWORD_KEY, newPassword.trim());
-    setNewPassword("");
-    alert("Senha alterada com sucesso.");
+
+    try {
+      await trocarSenha(newPassword.trim());
+      setNewPassword("");
+      alert("Senha alterada com sucesso.");
+    } catch (error) {
+      alert(error.message || "Erro ao alterar senha.");
+    }
   }
 
-  if (!isAuthenticated) {
+  async function handleLogout() {
+    try {
+      await sair();
+      setModule("dashboard");
+    } catch (error) {
+      alert(error.message || "Erro ao sair.");
+    }
+  }
+
+  if (loadingSession) {
+    return <div style={{ padding: 20 }}>Carregando...</div>;
+  }
+
+  if (!session) {
     return (
       <LoginScreen
         passwordInput={passwordInput}
         setPasswordInput={setPasswordInput}
+        emailInput={emailInput}
+        setEmailInput={setEmailInput}
         loginError={loginError}
         handleLogin={handleLogin}
+        handleCreateAccount={handleCreateAccount}
       />
     );
   }
@@ -402,7 +492,7 @@ export default function App() {
         {module === "configuracoes" && (
           <section className="panel settings-panel">
             <h2>Configurações</h2>
-            <p>Troque a senha de entrada do sistema.</p>
+            <p>Troque a senha da conta logada no sistema.</p>
 
             <label className="field">
               <span>Nova senha</span>
@@ -419,10 +509,7 @@ export default function App() {
                 Salvar nova senha
               </button>
 
-              <button
-                className="secondary-btn"
-                onClick={() => setIsAuthenticated(false)}
-              >
+              <button className="secondary-btn" onClick={handleLogout}>
                 Sair do sistema
               </button>
             </div>
